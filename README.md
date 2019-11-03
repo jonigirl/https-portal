@@ -109,8 +109,11 @@ section are HTTPS-PORTAL specific configurations. This time we added an extra
 parameter `-d`, which will tell Docker Compose to run the apps defined in
 `docker-compose.yml` in the background.
 
-Note: `STAGE` is `staging` by default, which results in a test
+Note: 
+
+- `STAGE` is `staging` by default, which results in a test
 (untrusted) certificate from Let's Encrypt.
+- `wordpress` is the hostname of WordPress container within HTTPS-PORTAL container. Usually you can use the service name of your WordPress container.
 
 ## Features
 
@@ -144,15 +147,24 @@ Once you are done testing, you can deploy your application stack to the server.
 
 ### Redirections
 
-HTTPS-PORTAL support quick setup for redirections. It is deliberately made to
-support https targets only because otherwise it'd be against the idea of this project.
+HTTPS-PORTAL support quick setup for redirections.
 
 ```yaml
 https-portal:
   # ...
   environment:
-    STAGE: local
-    DOMAINS: 'example.com => https://target.example.com/foo/bar' # Notice it's "=>" instead of the normal "->"
+    DOMAINS: 'example.com => https://target.example.com' # Notice it's "=>" instead of the normal "->"
+```
+
+All paths will be redirected to the target. E.g. `https://example.com/foo/bar` will be 301 redirected to `https://target.example.com/foo/bar`.
+
+A common use case is to redirect `www.example.com` to `example.com`. Configure your DNS, make both `www.example.com` and `example.com` resolve to the HTTPS-PORTAL host, and use the following compose:
+
+```yaml
+https-portal:
+  # ...
+  environment:
+    DOMAINS: 'www.example.com => https://example.com' # Notice it's "=>" instead of the normal "->"
 ```
 
 ### Automatic Container Discovery
@@ -375,7 +387,7 @@ The following are the available params with their default values:
 WORKER_PROCESSES=1
 WORKER_CONNECTIONS=1024
 KEEPALIVE_TIMEOUT=65
-GZIP=on
+GZIP=on                                 # can be 'off' (you need quotes)
 SERVER_TOKENS=off
 SERVER_NAMES_HASH_MAX_SIZE=512
 SERVER_NAMES_HASH_BUCKET_SIZE=32        # defaults to 32 or 64 based on your CPU
@@ -389,13 +401,17 @@ PROXY_READ_TIMEOUT=60;
 ACCESS_LOG=off;
 ```
 
-You can also add
+#### Websocket
+
+You can add
 
 ```
 WEBSOCKET=true
 ```
 
 to make HTTPS-PORTAL proxy WEBSOCKET connections.
+
+#### DNS caching
 
 To avoid nginx DNS caching, activate dynamic upstream
 
@@ -404,12 +420,28 @@ RESOLVER="127.0.0.11 ipv6=off valid=30s"
 DYNAMIC_UPSTREAM=true
 ```
 
+#### HSTS Header
+
+You can use the follow environment variable to set HSTS header.
+
+**WARNING:** Please test with a low value before you set it to a desired high max_age value. Once you send the header out, all visited clients would refuse to downgrade to HTTP. It would then be impossible to fallback your website to HTTP. 
+
+```
+HSTS_MAX_AGE=60  # in seconds
+```
+
 ### Override Nginx Configuration Files
 
 You can override default nginx settings by providing a config segment of
 nginx.conf containing a valid `server` block. The custom nginx configurations
 are [ERB](http://www.stuartellis.eu/articles/erb/) templates and will be
 rendered before usage.
+
+You can either override just override one single site's config or all sites' configs.
+
+#### Override just one single site's config
+
+In this case, you provide `<your-domain>.conf.erb` and `<your-domain>.conf.ssl.erb`. The former one takes care of the ownership verification from Let's Encrypt, and redirection to https URL. The latter one handles https connections.
 
 For instance, to override both HTTPS and HTTP settings for `my.example.com`,
 you can launch HTTPS-PORTAL by:
@@ -423,11 +455,15 @@ https-portal:
 ```
 
 [This file](https://github.com/SteveLTN/https-portal/blob/master/fs_overlay/var/lib/nginx-conf/default.conf.erb) and [this file](https://github.com/SteveLTN/https-portal/blob/master/fs_overlay/var/lib/nginx-conf/default.ssl.conf.erb) are the default configuration files used by HTTPS-PORTAL.
-You can probably start by copying these files and make modifications to them.
+You can probably start by copying these files. You can either keep the variables or just hard-code the domain and upstream, etc.
 
 Another example can be found [here](/examples/custom_config).
 
+#### Override All sites' default config
+
 If you want to make an Nginx configuration that will be used by all sites, you can overwrite `/var/lib/nginx-conf/default.conf.erb` or `/var/lib/nginx-conf/default.ssl.conf.erb`. These two files will be propagated to each site if the site-specific configuration files are not provided.
+
+Since the config files will be used on all your sites, please keep using the variables already in the file and don't hard-code anything.
 
 ### Manually Set RSA Private Key Length
 
@@ -462,6 +498,7 @@ For most people the most important rate limits are:
 
 * 5 failed validation attempts per hour
 * 50 certificates per registered domain per week
+* 5 duplicated certificate per week (for renewal)
 
 If you want to use HTTPS for multiple sub-domains with a single certificate
 Let's Encrypt supports putting up to 100 domains in one certificate, however it
